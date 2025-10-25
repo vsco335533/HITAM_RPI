@@ -1,0 +1,96 @@
+import RPi.GPIO as GPIO
+import smbus
+from time import sleep
+
+# -----------------------------
+# GPIO and Servo Setup
+# -----------------------------
+SERVO_PIN = 4
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+GPIO.setup(SERVO_PIN, GPIO.OUT)
+
+pwm = GPIO.PWM(SERVO_PIN, 50)  # 50 Hz
+pwm.start(0)
+
+# -----------------------------
+# MPU6050 Setup
+# -----------------------------
+MPU_ADDR     = 0x68
+PWR_MGMT_1   = 0x6B
+SMPLRT_DIV   = 0x19
+CONFIG       = 0x1A
+GYRO_CONFIG  = 0x1B
+INT_ENABLE   = 0x38
+ACCEL_YOUT   = 0x3D
+
+bus = smbus.SMBus(1)  # Use bus 1 for RPi 3/4
+
+def MPU_Init():
+    bus.write_byte_data(MPU_ADDR, SMPLRT_DIV, 7)
+    bus.write_byte_data(MPU_ADDR, PWR_MGMT_1, 1)
+    bus.write_byte_data(MPU_ADDR, CONFIG, 0)
+    bus.write_byte_data(MPU_ADDR, GYRO_CONFIG, 24)
+    bus.write_byte_data(MPU_ADDR, INT_ENABLE, 1)
+
+def read_raw_data(addr):
+    """Safely read 16-bit value from MPU6050."""
+    try:
+        high = bus.read_byte_data(MPU_ADDR, addr)
+        low = bus.read_byte_data(MPU_ADDR, addr + 1)
+        value = (high << 8) | low
+        if value > 32768:
+            value -= 65536
+        return value
+    except Exception as e:
+        print(f"Read error: {e}")
+        return 0  # Default safe value on read error
+
+# -----------------------------
+# Utility Functions
+# -----------------------------
+def map_value(x, in_min, in_max, out_min, out_max):
+    """Map input range to output range."""
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+def set_servo_angle(angle):
+    """Move servo to a specified angle smoothly."""
+    angle = max(0, min(180, angle))  # Clamp range
+    duty = angle / 18 + 2
+    pwm.ChangeDutyCycle(duty)
+    sleep(0.03)
+
+# -----------------------------
+# Initialization
+# -----------------------------
+MPU_Init()
+print("MPU6050 Initialized. Starting continuous data feed...")
+
+# Initialize filter for smoothing (simple moving average)
+filtered_Ay = 0
+
+# -----------------------------
+# Main Loop
+# -----------------------------
+try:
+    while True:
+        acc_y = read_raw_data(ACCEL_YOUT)
+        Ay = acc_y / 16384.0  # Convert raw to 'g'
+
+        # Filter to reduce noise (smooths servo movement)
+        alpha = 0.1  # adjust 0.05–0.3 for smoothness vs. responsiveness
+        filtered_Ay = alpha * Ay + (1 - alpha) * filtered_Ay
+
+        # Convert -1g to +1g into 0–180 degrees
+        angle = map_value(filtered_Ay, -1, 1, 0, 180)
+        set_servo_angle(angle)
+
+        # Optional: print values for debugging
+        print(f"Ay={filtered_Ay:.2f}g → Angle={angle:.1f}°")
+
+        sleep(0.05)  # 20 updates per second — smooth and stable
+
+except KeyboardInterrupt:
+    print("\nStopping gracefully...")
+    pwm.stop()
+    GPIO.cleanup()
