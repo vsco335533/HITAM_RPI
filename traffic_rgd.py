@@ -34,3 +34,13 @@ while True:
     GPIO.output(BLUE, GPIO.HIGH)    # Blue for pedestrian (optional)
     time.sleep(1)
     led_off()
+
+
+
+
+
+
+
+
+
+https://deploy-formpage.vercel.app/
